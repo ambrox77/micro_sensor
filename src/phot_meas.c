@@ -5,23 +5,55 @@
  *      Author: MCV
  */
 
-#include <multi_adc.h>
 #include "stm32f4xx.h"
 #include "stm32f4_discovery.h"
 #include "diag/Trace.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <phot_meas.h>
+
+#define CHANNELS_NUMBER 4
+#define AVERAGE_CYCLES 1
+#define BUFFER_SIZE (CHANNELS_NUMBER*AVERAGE_CYCLES)
 
 
-uint16_t ADC1ConvertedValue[5] = {0,0,0,0,0};//Stores converted vals
+uint16_t ADC1ConvertedValues[BUFFER_SIZE];
+
+uint8_t phot_transfer_ready_flag=0;
+
+void PHOT_GetMeas(phot_measures_T* meas)
+{
+	double tempa=0,tempb=0,tempc=0,tempd=0;
 
 
-void IniteADC_multi(void){
+	//while(phot_transfer_ready_flag == 0);
+
+//	for(uint8_t i=0;i<BUFFER_SIZE;i+=4){
+//		tempa += ADC1ConvertedValues[i];
+//		tempb += ADC1ConvertedValues[i+1];
+//		tempc += ADC1ConvertedValues[i+2];
+//		tempd += ADC1ConvertedValues[i+3];
+//	}
+//
+//	tempa = tempa / (double)AVERAGE_CYCLES;
+//	tempb = tempb / (double)AVERAGE_CYCLES;
+//	tempc = tempc / (double)AVERAGE_CYCLES;
+//	tempd = tempd / (double)AVERAGE_CYCLES;
+
+	meas->photo_A =ADC1ConvertedValues[0];    // tempa;
+	meas->photo_B =ADC1ConvertedValues[1]; //  tempb;
+	meas->photo_C =ADC1ConvertedValues[2]; //  tempc;
+	meas->photo_D =ADC1ConvertedValues[3]; //  tempd;
+
+//	phot_transfer_ready_flag=0;
+}
+void PHOT_Init(void){
 	ADC_InitTypeDef       ADC_InitStruct;
 	ADC_CommonInitTypeDef ADC_CommonInitStruct;
 	DMA_InitTypeDef       DMA_InitStruct;
 	GPIO_InitTypeDef      GPIO_InitStruct;
+	NVIC_InitTypeDef NVIC_InitStruct;
 
 	/* Enable ADC1, DMA2 and GPIO clocks ****************************************/
 	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_DMA2 | RCC_AHB1Periph_GPIOC | RCC_AHB1Periph_GPIOA, ENABLE);
@@ -30,9 +62,9 @@ void IniteADC_multi(void){
 	/* DMA2 Stream0 channel0 configuration **************************************/
 	DMA_InitStruct.DMA_Channel = DMA_Channel_0;
 	DMA_InitStruct.DMA_PeripheralBaseAddr = (uint32_t)&ADC1->DR;//ADC1's data register
-	DMA_InitStruct.DMA_Memory0BaseAddr = (uint32_t)&ADC1ConvertedValue;
+	DMA_InitStruct.DMA_Memory0BaseAddr = (uint32_t)&ADC1ConvertedValues;
 	DMA_InitStruct.DMA_DIR = DMA_DIR_PeripheralToMemory;
-	DMA_InitStruct.DMA_BufferSize = 5;
+	DMA_InitStruct.DMA_BufferSize = BUFFER_SIZE;
 	DMA_InitStruct.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
 	DMA_InitStruct.DMA_MemoryInc = DMA_MemoryInc_Enable;
 	DMA_InitStruct.DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord;//Reads 16 bit values
@@ -70,7 +102,7 @@ void IniteADC_multi(void){
 	ADC_InitStruct.ADC_ExternalTrigConv = 0;
 	ADC_InitStruct.ADC_ExternalTrigConvEdge = ADC_ExternalTrigConvEdge_None;
 	ADC_InitStruct.ADC_DataAlign = ADC_DataAlign_Right;//Data converted will be shifted to right
-	ADC_InitStruct.ADC_NbrOfConversion = 5;
+	ADC_InitStruct.ADC_NbrOfConversion = CHANNELS_NUMBER;
 	ADC_Init(ADC1, &ADC_InitStruct);//Initialize ADC with the configuration
 
 	/* Select the channels to be read from **************************************/
@@ -78,10 +110,20 @@ void IniteADC_multi(void){
 	ADC_RegularChannelConfig(ADC1, ADC_Channel_11, 2, ADC_SampleTime_144Cycles);//PC1
 	ADC_RegularChannelConfig(ADC1, ADC_Channel_12, 3, ADC_SampleTime_144Cycles);//PC2
 	ADC_RegularChannelConfig(ADC1, ADC_Channel_13, 4, ADC_SampleTime_144Cycles);//PC3
-	ADC_RegularChannelConfig(ADC1, ADC_Channel_1,  5, ADC_SampleTime_144Cycles);//PA1
+	//ADC_RegularChannelConfig(ADC1, ADC_Channel_1,  5, ADC_SampleTime_144Cycles);//PA1
+
+
+	NVIC_InitStruct.NVIC_IRQChannel = DMA2_Stream0_IRQn;
+	NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
+	NVIC_InitStruct.NVIC_IRQChannelPreemptionPriority = 3;
+	NVIC_InitStruct.NVIC_IRQChannelSubPriority = 1;
+	NVIC_Init(&NVIC_InitStruct);
 
 	/* Enable DMA request after last transfer (Single-ADC mode) */
 	ADC_DMARequestAfterLastTransferCmd(ADC1, ENABLE);
+
+	//DMA_ITConfig(DMA2_Stream0, DMA_IT_TC, ENABLE);
+
 
 	/* Enable ADC1 DMA */
 	ADC_DMACmd(ADC1, ENABLE);
@@ -91,4 +133,13 @@ void IniteADC_multi(void){
 
 	/* Start ADC1 Software Conversion */
 	ADC_SoftwareStartConv(ADC1);
+}
+
+
+void DMA2_Stream0_IRQHandler()
+{
+	if(DMA_GetITStatus(DMA2_Stream0, DMA_IT_TC)!= RESET){
+		 DMA_ClearITPendingBit(DMA2_Stream0, DMA_IT_TC);
+		 phot_transfer_ready_flag=1;
+		}
 }
